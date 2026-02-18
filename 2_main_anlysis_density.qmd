@@ -1,0 +1,601 @@
+---
+title: "EA10_CMIP6_datatable"
+author: "Dingjin Chu"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+# Read me
+
+The code required to change in different versions is annotated by \\**`changecode\`**
+
+The data with same name is different in different version of the R.data, which varies in different version of code decided by the annotation of `changecode` as shown below:
+
+1\. There are two options of extreme magnitude: mean value or the sum divided by the number of years.
+
+(The pros and cons between the two methods are how to present the sum of extreme events and the magnitude of extreme events at one time)
+
+See the session of saving data to get which session this code is for
+
+Aggregating data in different steps would produce different results!
+
+"In the code below, there are two different results between zone_table and date_series, solely due to the calculation order. The first one merges the date at the start, while the second merges the space at the start."
+
+2 The categorical variables intended to be grouped are as below:
+
+1.  date
+2.  zone (climate region)
+3.  space (x,y)
+4.  model (different models)
+
+The name of an object involving Nodate means the date has been grouped, this naming rule also applies to other variables.
+
+The explanation of the name:
+
+index: select between the value and the frequency of the extreme events existed
+
+var: the different variables
+
+models: how many models are consistent or has values in this cell
+
+model: the name of the model
+
+magnitude: the negative (10th) or positive (90th) extremes
+
+ext_type: var+magnitude or another specific case: cold, hot, dry, wet, hot&dry, hot&not dry, dry&not hot)
+
+Other
+
+How to develop a code with higher plasticity to apply to other situations.
+
+1\. Use characters with a certain pattern to name the column, and use numbers as less as possible.
+
+How to present the number of the models in a date-series plot? (no way)
+
+How to explain the different performance in different models (make sure our results are attached with the results from different models)
+
+Add one type of model, the mean value of all models
+
+# read data
+
+```{r}
+library(terra)
+library(tidyverse)
+library(data.table)
+
+
+
+ threshold <- fread("datatable/ca_threshold_density.csv")
+ zone_statistic <- mean
+
+# areatable <- fread("datatable/ca_xy_area.csv")
+climatebound <- terra::vect("INPUT/climate+dem+lucc+npp+bound/bound.shp")
+
+# the reason I placed the function in there is because it processes fewer data compared to the data after pivot_longer.
+threshold0 <- threshold |> 
+  rename_at(vars(contains("y_")),~str_replace(.,"y_","")) |> 
+  melt(measure = 6:85,variable.name ="date")  
+
+threshold0[,
+  date:=as.numeric(date)][,
+  date:=date+2020
+  ]
+
+# remove NA values casued by water bodies in certain model.(Are there other simple ways I can achieve the same thing?)
+threshold1 <- copy(threshold0)[,c("tenth","ninetieth"):=NULL] |> 
+  dcast(model+scenario+x+y+date~var,value.var=c("value"))  |>
+  na.omit() |> 
+  melt(measure = 6:8,variable.name ="var")  
+
+
+threshold1 <- merge(threshold1,copy(threshold0)[,value:=NULL] |> 
+  distinct(model,scenario,var,tenth,ninetieth))
+
+
+rm(threshold,threshold0)
+```
+
+# Extreme (Degree&frequency)
+
+```{r}
+
+ext <- copy(threshold1)[,
+  c("tenth","ninetieth"):=.(ifelse(value<tenth,value,NA),
+  ifelse(value>ninetieth,value,NA))][,
+  value:=NULL]             # pinpoint the extreme value 
+
+
+ext_long <- ext|> 
+  melt(measure=c("tenth","ninetieth"),
+  variable.name = "magnitude") |> 
+  na.omit("value")   # * This has been already na.omitted 
+
+# Below code is used to separate the different time stages
+# [,
+#     session:=fcase(date<2041,"2021-2040",
+#                   date<2061,"2041-2060",
+#                   date<2081,"2061-2080",
+#                   default = "2081-2100")]
+# These functions would modify the input
+
+rm(ext)
+```
+
+## spatial_plot
+
+```{r}
+
+# How to quantify the number of the models showing same signals in the same region? 
+
+
+# In The below code, the column name models means that how many models  showing same signals in the 80 years session and each cell, this explanation is because we firstly merge in session not in each year and each cell. 
+
+# If we calculate the number of the models showing same signals in each year and each cell (we firstly merge the model), the number of model showing same signals in each cell is lower.
+
+
+# two methods to process in date 
+# 1 mean date
+# 2 sum date/year
+
+# changecode
+
+ext_nodate <- ext_long[,
+#  .(value=mean(value), # mean value or 
+ .(value=sum(value)/80,   # the sum value divided by the number of years
+  quantity=.N), # Calculate the number of extreme events given the executed na.omit 
+  by=.(scenario,var,x,y,model,magnitude)]    # merge the date
+
+
+ext_nodatemodel <- ext_nodate [,
+  .(value=mean(value,na.rm = T),
+  quantity=mean(quantity,na.rm=T),
+  models=.N), # The models here represent how many models exhibit extreme events in certain areas(cells). While the represent is kind of meaningless, because The model is counted as long as the extreme events occurred equal or    
+  by=.(scenario,var,x,y,magnitude)]  # merge the model
+```
+
+## zone_table
+
+```{r}
+
+ext_nodate_zone <- ext_nodate |> 
+  group_nest(scenario, var, magnitude, model) |> 
+  mutate(
+    data = map(data, ~rast(., crs = climatebound)), # Convert to raster
+    zone = map(data, ~zonal(., climatebound, zone_statistic, na.rm = TRUE) |>
+             mutate(region = c("north", "central", "sw", "se"))),
+    global = map(data, ~global(., zone_statistic, na.rm = TRUE) |>
+               rownames_to_column() |>
+               rename(value = 2) |>  # Rename the sum column to "value"
+               pivot_wider(names_from = rowname, values_from = value))
+  ) |> 
+  select(-data) |> 
+  unnest(cols = c(zone, global), names_sep = "_") |>
+  pivot_wider(
+    names_from = zone_region,
+    values_from = c(zone_value, zone_quantity)
+  ) |> 
+  pivot_longer(global_value:zone_quantity_se) |> 
+  separate(name, into = c("name", "index", "region"), sep = "_") |> 
+  mutate(region = ifelse(is.na(region), "CA", region)) |> 
+  select(-name)
+```
+
+## date series table
+
+```{r}
+
+ext_nospace <- ext_long[,
+  .(value=zone_statistic(value,na.rm = T),  
+  quantity=.N), # Calculate the number of extreme events over Central Asia in each year 
+  by=.(scenario,var,date,model,magnitude)]
+
+
+ext_nospace_zone <- ext_nospace
+
+ext_nospacemodel <- ext_nospace[,
+  .(value=mean(value,na.rm =T),
+  quantity=mean(quantity,na.rm=T),
+  models=.N),  # Calculate the number of models given the executed na.omit 
+  by=.(scenario,var,date,magnitude)]
+```
+
+## Separate date-series
+
+```{r}
+
+
+#changecode
+
+ext_nospace_date_zone <- copy(ext_nospace_zone)[
+  , class := ifelse(date < 2060, "2020~2060", "2060~2100")][
+  , .(value = sum(value, na.rm = TRUE)/40, quantity = sum(quantity, na.rm = TRUE)/40),
+# , .(value = mean(value, na.rm = TRUE), quantity = sum(quantity, na.rm = TRUE)/40),  
+    by = c("scenario", "var", "class", "magnitude", "model")][
+  , magnitude := factor(magnitude, levels = c("ninetieth", "tenth"))]
+
+
+
+```
+
+# Attribution (Degree&Frequency)
+
+```{r}
+
+## att is the data after multiplying npp 
+#(as the long as the climate column has the value, it means negative npp occurs)
+## The data in cli_npp don't multiply the npp 
+
+cli_npp <- copy(ext_long)[
+  !var=="npp",
+  value:=fifelse(is.na(value),value,1)] |> # Converting the climate value to 1 represents the frequency 
+  dcast(model+scenario+x+y+date~var+magnitude,
+  value.var = c("value"))  
+
+names(cli_npp)[8:11] <- c("dry","wet","cold","hot")
+
+
+cli_npp[,
+  dry_hot:=hot*dry   # Find the compound events # 1*na=na, 1*1=1 
+  ]
+
+# Below code is used to get the dry events which are not hot and hot events which are not dry  
+cli_isolate <-  copy(cli_npp)[  # Find the extreme events separate to compound events
+  is.na(dry_hot)] [,  # Remove the compound events  
+  c("wet","cold","dry_hot","npp_tenth","npp_ninetieth"):=NULL] |> 
+  setnames(c("dry","hot"),c("dry_nothot","hot_notdry"))
+
+
+cli_all <- merge(cli_npp,cli_isolate,all=T,by=names(cli_npp)[1:5])
+
+
+att_negative <- copy(cli_all)[!is.na(npp_tenth)][,       # 1*na=na, 1*value=value 
+  (names(cli_all)[8:14]):=map(.SD,\(x)x*npp_tenth), 
+  .SD=dry:hot_notdry]
+
+
+att_positive <- copy(cli_all)[!is.na(npp_ninetieth)][,       # 1*na=na, 1*value=value 
+  (names(cli_all)[8:14]):=map(.SD,\(x)x*npp_ninetieth), 
+  .SD=dry:hot_notdry]
+
+
+att_long_positive <- copy(att_positive)[,
+    c("npp_tenth","npp_ninetieth"):=NULL][,magnitude:="ninetieth"] |> 
+  melt(measure.vars = 6:12,variable.name = "ext_type")|> 
+  na.omit("value")
+
+
+att_long_negative <- copy(att_negative)[,
+    c("npp_tenth","npp_ninetieth"):=NULL][,magnitude:="tenth"] |> 
+  melt(measure.vars = 6:12,variable.name = "ext_type")|> 
+  na.omit("value")
+
+
+
+att_long <- rbind(att_long_positive,att_long_negative)
+
+```
+
+## spatial plot
+
+```{r}
+# changecode
+att_nodate <- att_long[,
+#  .(value=mean(value,na.rm = T),
+ .(value=sum(value)/80,   # the sum value divided by the number of years
+  quantity=.N),
+  by=.(scenario,x,y,model,ext_type,magnitude)]
+
+
+att_nodatemodel <- att_nodate [,
+  .(value=mean(value,na.rm = T),
+  quantity=mean(quantity,na.rm=T),
+  models=.N),
+  by=.(scenario,x,y,ext_type,magnitude)]
+```
+
+## zone_table
+
+```{r}
+
+att_nodate_zone <- att_nodate              |> 
+  group_nest(scenario,ext_type,model,magnitude)      |> 
+  filter(map(data,~nrow(.))>3)             |>      
+  mutate(data=map(data,~rast(.,crs=climatebound))) |>   # The problem occurred in positive extreme events because there is only one positive NPP during the dry_hot condition under model MPI.  
+  mutate(zone=map(data,~zonal(.,climatebound,zone_statistic,na.rm=T) |> 
+  mutate(region=c("north","central","sw","se"))))  |> 
+  mutate(global=map(data,~global(.,zone_statistic,na.rm=T)|> 
+  rownames_to_column() |> 
+  rename(value = 2) |>
+  pivot_wider(names_from = rowname,values_from = value))) |> 
+  select(-data)                                       |> 
+  unnest(cols = c(zone, global),names_sep = "_")  |>  # below is how to tidy the data
+  pivot_wider(names_from = zone_region,
+  values_from = c(zone_value,zone_quantity)) |> 
+  pivot_longer(global_value:zone_quantity_se) |> 
+  separate(name,into=c("name","index","region"),sep="_") |> 
+  mutate(region=ifelse(is.na(region),"CA",region)) |> 
+  select(-name)
+```
+
+## date series
+
+```{r}
+
+att_nospace <- att_long[,
+  .(value=zone_statistic(value,na.rm = T),
+  quantity=.N),
+  by=.(scenario,date,model,ext_type,magnitude)]
+
+
+att_nospace_zone <- att_nospace
+
+att_nospacemodel <- att_nospace[,
+  .(value=mean(value,na.rm =T),
+  quantity=mean(quantity,na.rm=T),
+  models=.N),
+  by=.(scenario,date,ext_type,magnitude)]
+```
+
+## Separate date-series
+
+```{r}
+
+#changecode
+
+att_nospace_date_zone <- copy(att_nospace_zone)[, 
+    class := ifelse(date < 2060, "2020~2060", "2060~2100")][, 
+   .(value = sum(value, na.rm = TRUE)/40,quantity = sum(quantity, na.rm = TRUE)/40),
+   # .(value = mean(value, na.rm = TRUE),quantity = sum(quantity, na.rm = TRUE)/40),
+    
+    by = c("scenario", "class", "magnitude", "model","ext_type")][
+  , magnitude := factor(magnitude, levels = c("ninetieth", "tenth"))]
+
+
+
+```
+
+# NPP_Proportion(attribution)\_npp
+
+Find the NPP extremes first and then match it with climate extremes
+
+## Negative
+
+```{r}
+fre_ <- copy(att_negative)[, 
+    class := ifelse(date < 2060, "2020~2060", "2060~2100")][,npp_ninetieth:=NULL] |> 
+  na.omit("npp_tenth")  
+
+
+fre_[,
+  (names(fre_)[6:13]):=map(.SD,\(x)fifelse(is.na(x),0,1)),
+  .SD=npp_tenth: hot_notdry]  
+# Detect what factors contributed to negative NPP, the attributed factor is 1 and other is 0, by this way, we can detect how many certain climate factors could attribute to negative NPP by summing them in certain period.
+
+
+fre_nodate_ <- copy(fre_)[, 
+  map(.SD,sum), 
+  .SD=npp_tenth:hot_notdry,    
+  by=.(model,scenario,x,y,class)]  
+
+
+# calculate the extreme events not atrributed to climate factors
+frerest_nodate <- copy(fre_nodate_)[
+  dry==0&wet==0&cold==0&hot==0][,
+  .(rest=sum(npp_tenth)),
+  by=.(model,scenario,x,y,class)
+] 
+
+
+fre_nodate <- merge(fre_nodate_ ,frerest_nodate,all=T)[,
+  rest:=fifelse(is.na(rest),0,rest)]
+
+
+rm(frerest_nodate,fre_nodate_ )
+
+# Therefore, the proportion is equal to the division between total number of negative npp and negative attributed to climate factors in each cell in certain period.
+# Annotation: the negative npp which are certain also climate factors at the same position and time is marked as one, otherwise as zero.
+#therefore there is not problem about the attributed npp is at same position but not same time.  
+
+prop_nodate_negative <-  copy(fre_nodate)[,    
+  names(fre_nodate)[7:14]:=map(.SD,\(x)x/npp_tenth), # the number of attributed negative npp divide the number of negative npp.
+  .SD=dry:rest][,
+  npp_tenth:=NULL]|> 
+  melt(measure.vars = 6:13,
+  variable.name = "ext_type" )
+```
+
+## Positive
+
+```{r}
+fre_ <- copy(att_positive)[,npp_tenth:=NULL][, 
+    class := ifelse(date < 2060, "2020~2060", "2060~2100")] |> 
+  na.omit("npp_ninetieth")  
+
+
+fre_[,
+  (names(fre_)[6:13]):=map(.SD,\(x)fifelse(is.na(x),0,1)),
+  .SD=npp_ninetieth: hot_notdry]  
+# Detect what factors contributed to negative NPP, the attributed factor is 1 and other is 0, by this way, we can detect how many certain climate factors could attribute to negative NPP by summing them in certain period.
+
+
+fre_nodate_ <- copy(fre_)[, 
+  map(.SD,sum), 
+  .SD=npp_ninetieth:hot_notdry,    
+  by=.(model,scenario,x,y,class)]  
+
+
+# calculate the extreme events not atrributed to climate factors
+frerest_nodate <- copy(fre_nodate_)[
+  dry==0&wet==0&cold==0&hot==0][,
+  .(rest=sum(npp_ninetieth)),
+  by=.(model,scenario,x,y)
+] 
+
+
+fre_nodate <- merge(fre_nodate_ ,frerest_nodate,all=T)[,
+  rest:=fifelse(is.na(rest),0,rest)]
+
+
+rm(frerest_nodate,fre_nodate_ )
+
+# Therefore, the proportion is equal to the division between total number of negative npp and negative attributed to climate factors in each cell in certain period.
+# Annotation: the negative npp which are certain also climate factors at the same position and time is marked as one, otherwise as zero.
+#therefore there is not problem about the attributed npp is at same position but not same time.  
+
+prop_nodate_positive <-  copy(fre_nodate)[,    
+  names(fre_nodate)[7:14]:=map(.SD,\(x)x/npp_ninetieth), # the number of attributed negative npp divide the number of negative npp.
+  .SD=dry:rest][,
+  npp_ninetieth:=NULL]|> 
+  melt(measure.vars = 6:13,
+  variable.name = "ext_type")
+```
+
+## Merge
+
+```{r}
+
+prop_date <- rbind(prop_nodate_positive[,magnitude:="ninetieth"],
+                     prop_nodate_negative[,magnitude:="tenth"])
+
+# The below results are similar to the results by the calculation not classifying class/period at start.
+prop_nodate <- prop_date[, .(value = mean(value)), 
+                             by = .(model, scenario, x, y, ext_type, magnitude)]
+
+
+# See details in the file CA3_CMIP6_datatable_density_test
+
+```
+
+## Spatial plot
+
+```{r}
+# What would happen if at the same position one model is one extreme type, another model is another extreme type?
+# Does not mattary, becasye we divide the extreme type
+
+
+prop_nodatemodel <- prop_date[,
+  .(value=mean(value),
+  models=.N),
+  by=.(scenario,x,y,ext_type,magnitude,class)]
+```
+
+## zone_table
+
+```{r}
+prop_nodate_zone <- prop_date              |> 
+  group_nest(scenario,ext_type,model,magnitude,class) |> 
+  mutate(data=map(data,~rast(.,crs=climatebound))) |> 
+  mutate(zone=map(data,~zonal(.,climatebound,zone_statistic,na.rm=T) |> 
+  mutate(region=c("north","central","sw","se"))))  |> 
+  mutate(global=map(data,~global(.,zone_statistic,na.rm=T)|> 
+  rownames_to_column() |> 
+  rename(value = 2) |>  
+  pivot_wider(names_from = rowname,values_from = value))) |> 
+  select(-data)                                       |> 
+  unnest(cols = c(zone, global),names_sep = "_") |> 
+  pivot_wider(names_from=zone_region,values_from = zone_value) |> 
+  rename(CA=global_value)            |>    
+  pivot_longer(CA:se,names_to = "region") 
+```
+
+## (date series)
+
+```{r}
+# cant calculate date series in proportion, the previous one is false, unless series in different time-periods. 
+```
+
+# Sensitivity
+
+```{r}
+
+```
+
+## --------------------------------------------------
+
+# save data
+
+```{r}
+
+# changecode
+
+# objects_to_save <- ls(pattern = "model$|zone$")
+# save(list=objects_to_save,file="rdata/ca_density_mean.RData")
+
+# objects_to_save <- ls(pattern = "model$|zone$")
+# save(list=objects_to_save,file="rdata/ca_density_sum80.RData")
+
+objects_to_save <- ls(pattern = "model$|zone$")
+save(list=objects_to_save,file="rdata/ca_gross_sum80_zonesum.RData")
+ 
+# objects_to_save <- ls(pattern = "model$|zone$")
+# save(list=objects_to_save,file="rdata/ca_density_sum.RData")
+
+
+
+```
+
+# ------------no-used----------------------------
+
+# Climate_Proportion(attribution)
+
+Find the climate extremes first and then match it NPP extremes
+
+```{r}
+
+cli_all_nodate <- copy(cli_all)[,!c("npp_tenth")][,
+  (names(cli_all)[7:13]):=map(.SD,\(x)fifelse(is.na(x),0,1)), # convert na to 1
+  .SD=dry:hot_notdry][, 
+  map(.SD,sum), 
+  .SD=dry:hot_notdry,    
+  by=.(model,scenario,x,y)] |> 
+  melt(measure.vars = 5:11,
+  variable.name = "ext_type",value.name = "all")
+
+
+fre_nodate_long <- copy(fre_nodate)[,c("npp_tenth","rest"):=NULL] |> 
+  melt(measure.vars = 5:11,
+  variable.name = "ext_type" ,value.name = "withnpp") 
+
+
+cliprop_nodate <- merge(cli_all_nodate,fre_nodate_long,all=T)[,
+          prop:=withnpp/all][,
+    c("all","withnpp"):=NULL
+  ]|> 
+  na.omit("prop")
+
+
+
+```
+
+## Spatial plot
+
+```{r}
+cliprop_nodatemodel <- cliprop_nodate[,
+  .(prop=mean(prop,na.rm=T),
+  models=.N),
+  by=.(scenario,x,y,ext_type)]
+```
+
+## zone_table
+
+```{r}
+cliprop_nodate_zone <- cliprop_nodate              |> 
+  group_nest(scenario,ext_type,model)              |> 
+  mutate(data=map(data,~rast(.,crs=climatebound))) |> 
+  mutate(zone=map(data,~zonal(.,climatebound,mean,na.rm=T) |> 
+  mutate(region=c("north","central","sw","se"))))  |> 
+  mutate(global=map(data,~global(.,mean,na.rm=T)|> 
+  rownames_to_column() |> 
+  pivot_wider(names_from = rowname,values_from = mean))) |> 
+  select(-data)                                       |> 
+  unnest(cols = c(zone, global),names_sep = "_") |> 
+  pivot_wider(names_from=zone_region,values_from = zone_prop) |>
+  rename(CA=global_prop)            |>    
+  pivot_longer(CA:se,names_to = "region") 
+
+# the na.value represnts there is no value in this region.
+```
+
+# -------------------------------------

@@ -1,0 +1,1813 @@
+---
+title: "CA8_plot"
+format: html
+editor: visual
+execute: 
+  output: true
+  message: false
+  warning: false
+  echo: false
+editor_options: 
+  chunk_output_type: console
+---
+
+Challenges: 0: How to arrange each plot?
+
+1: Chose the best plots from many options(sum, mean, table, raster).
+
+2: The legend of the index, so that I can collect them
+
+3: There is replication between table and spatial data
+
+# Load functions
+
+```{r}
+library(terra)
+library(tidyverse)
+library(data.table)
+library(ggpubr)
+library(patchwork)
+
+
+design <- c(area(1,1,1,2),
+            area(2,1,2,1),
+            area(2,2,2,2))
+  
+design2 <- c(area(1,1,1,3),
+            area(2,1,2,1),
+            area(2,2,2,2),
+            area(2,3,2,3))
+  
+# The below functions only work when it is connected by the symbpl %>%  
+add_unit <- function(data){ 
+  mutate(
+    data,
+    unit=case_when(
+      var=="npp"~list(expression(NPP~gC~m^-2~yr^-1)),
+      var=="pr"~list(expression(Precipitation~mm~yr^-1)),
+      var=="tas"~list("temperature Celsius")))
+}
+
+change_ext <- function(data){ 
+ mutate(data,ext_type=str_replace(ext_type,"_"," & \n"))
+}
+
+
+
+
+extmodify <- function(data){ 
+  mutate(data,
+    region=str_replace_all(region,
+    c("CA"="Central Asia","north"="NCA","central"="CCA",
+    "sw"="SWCA","se"="SECA")))|> 
+  mutate(region=factor(region,
+    levels=c("Central Asia","NCA","SECA","SWCA","CCA")))}
+
+
+spatial_theme <- theme(
+      legend.position="bottom",    
+      legend.key.width=unit(1.3, "cm"),
+      legend.key.height = unit(0.7,"cm"),
+      legend.text = element_text(size=10),
+      legend.title = element_text(size=13),
+      strip.background = element_rect(fill="white"))
+
+
+
+space_theme <-  theme(
+  plot.margin = unit(c(0, 0, 0, 0), "cm"),
+  axis.text = element_blank(), 
+  axis.ticks = element_blank(),
+  legend.margin=margin(t = 0, unit='cm'),
+  legend.position="bottom",    
+  legend.key.width=unit(0.5, "cm"),
+  legend.key.height = unit(0.3,"cm"),
+  legend.title = element_text(size=8),
+  strip.background = element_rect(fill="white"),
+  panel.spacing = unit(0, "cm"))
+
+
+##read climate bound ----
+climatebound <- vect("F:/CMIP6_raster/INPUT/climate+dem+lucc+npp+bound/bound.shp")
+values(climatebound) <-   c("NCA","CCA","SWCA","SECA")
+  #c("north","central","sw","se")
+
+bound_sf <- climatebound |> sf::st_as_sf()
+
+```
+
+# Read data
+
+```{r}
+
+# Import spatial mean SD trend created by CA2.5.
+load("rdata/ca_mean_sd_trend.RData")
+load("rdata/ca_density_sum80.RData")
+load("rdata/ca_gross.RData")
+load("rdata/ca_gross_space_relationship.RData")
+load("F:/CMIP6_table/radata/contri_gross_plot.RData")
+
+
+
+
+```
+
+# Basic_table
+
+```{r}
+
+modifydata <- function(data){ data |> 
+  mutate(
+    country=str_replace_all(
+      country,
+      c("all"="Central Asia","north"="NCA","central"="CCA",
+        "sw"="SWCA","se"="SECA")))|> 
+  mutate(
+    country=factor(
+    country,
+    levels=c("Central Asia","NCA","SECA","SWCA","CCA")))}
+
+
+
+trend_zone_data <- alltrendresult_plot |> 
+  filter(index=="npp") %>%
+  modifydata()
+
+
+sd_zone_data <- IAV_SD_table_plot |> 
+  filter(index=="npp") |> 
+  mutate(IAV_sd=ifelse(index=="tas",IAV_sd*100,IAV_sd))|> 
+  modifydata()
+
+
+contri_data <- contri_sum_plot %>% 
+  select(scenario,model,central:sw) %>%  
+  pivot_longer(central:sw,names_to = "country") %>% 
+  modifydata()
+
+
+corplot_data <- nppcorp_plot |> 
+  select(-c(p_npp_pr:p_npp_tas)) |> 
+  pivot_longer(cor_npp_pr:cor_npp_tas,values_to = "cor")%>%  # Shows the percent 
+  mutate(name=str_replace_all(name,c("cor_npp_pr"="P","cor_npp_tas"="T"))) %>%
+  modifydata()
+
+
+contricli_data <- contricli_sum_plot %>% 
+  select(scenario,name,model,central:sw) %>%  
+  pivot_longer(central:sw,names_to = "country") %>% 
+#  mutate(value=value*100) %>%  # Shows the percent 
+  mutate(name=str_replace_all(name,c("pr_fit"="P","tas_fit"="T",".resid"="residual"))) %>%
+  modifydata()
+
+
+
+prop_nodate_zone |> 
+  summarise(value=mean(value),.by=c(scenario,ext_type,region)) |> 
+  filter(region=="CA",ext_type=="rest") 
+```
+
+# Basic_spatial
+
+```{r}
+ #mean_trend_sd_space
+
+basic_space <- mean_nodatemodel_frame    |> 
+  mutate(type="mean")                    |> 
+  bind_rows(trend_nomodel_frame |> mutate(type="trend")) |> 
+  bind_rows(sd_nomodel_frame |> mutate(type="sd"))       |> 
+#  filter(scenario%in%c("SSP585")) |> 
+  select(-label)                                         |> 
+  group_nest(type,var)                                   |> 
+  mutate(bound=list(sf::st_as_sf(climatebound)))         |> 
+  add_unit()                                             |> 
+  mutate(
+    unit=ifelse(
+      var=="npp"&type=="trend",list(expression(NPP~gC~m^-2~yr^-2)),unit))
+  
+
+
+    
+  
+    
+basic_space_plot <- pmap(
+  list(basic_space$data,
+       basic_space$bound,
+       basic_space$unit),
+  ~ggplot()+
+    geom_raster(data =..1,aes(x = x, y = y,fill = mean)) +
+    geom_sf(data=..2,fill=alpha(0.01)) +
+    geom_sf_text(aes(label=value),size=4,data = ..2)    +
+    coord_sf()+
+  # scale_fill_gradientn(
+  #   colours = c("#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"),
+  #   name = expression("NPP gC m"^{-2})
+  # )   +
+   scale_fill_gradientn(
+      colours = colorRampPalette(
+        c("#ffffcc", "#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#0c2c84")
+      )(200),  # ⬅️ more color levels (200 shades)
+      name = expression("NPP gC m"^{-2})
+    ) +
+  
+    labs(fill=..3, x ='',y="")+
+    theme_bw()          +     
+    spatial_theme+ 
+    facet_wrap(.~scenario))
+
+basic_space_plot[[4]]
+ 
+```
+
+# Sensitivity spatial
+
+```{r}
+
+relation_space <- bind_rows(
+  model_out |>  pivot_longer(rsquare:pr_sen) ,
+  cor_out   |>  pivot_longer(pr_npp:tas_npp_p) ,
+  npp_contri |> select(-npp) |> pivot_longer(contri) |> mutate(value=10000*value),
+  cli_contri |> rename(name=var)|> mutate(value=10000*value))  |> 
+  filter(scenario=="SSP585") |> 
+  group_nest(name) |> # There is NA value in dataset.
+  mutate(
+    mean_data=map(
+      data, 
+      ~summarise(.,value=mean(value,na.rm=T),.by = c(scenario,x,y))),
+    sd_data=map(
+      data, 
+      ~summarise(.,value=sd(value,na.rm=T),.by = c(scenario,x,y)))) |> 
+  select(-data)
+
+
+relation_space_data <- 
+  relation_space |> 
+  mutate(bound=list(sf::st_as_sf(climatebound))) |> 
+  mutate(name=as.list(name))
+
+
+# With boundary but not detailed information in data frame 
+relation_mean_plot <- 
+  pmap(list(relation_space_data$mean_data,
+            relation_space_data$bound,
+            relation_space_data$name),
+       ~ggplot()+
+         geom_raster(data =..1,aes(x = x, y = y,fill = value)) +
+         geom_sf(data=..2,fill=alpha(0.01)) +
+         geom_sf_text(aes(label=value),size=5,data = ..2 ) +
+         coord_sf()+
+         scale_fill_gradientn(colours = terrain.colors(100))+
+         labs(fill=..3, x ='',y="")+
+         theme_bw() +
+         spatial_theme) 
+
+relation_mean_plot[[1]]
+```
+
+# Result0 extremes
+
+```{r}
+load("rdata/ca_density_sum80.RData")
+
+ext_nodate_zone %>% 
+  group_by(scenario,var,magnitude,index,region) %>% 
+  summarise(value=mean(value)) %>% 
+  filter(index=="value") %>% 
+  filter(region%in%c("CA")) %>% View()
+
+
+plot1 <- ext_nodate_zone %>% filter(!var=="npp")  %>% 
+  extmodify
+
+p5 <- plot1 %>%
+  filter(index == "value") %>%
+  ggplot(aes(x = region, y = value, fill = scenario)) +
+  stat_summary(
+    fun = mean,
+    geom = "col",
+    position = position_dodge(width = 0.9),
+    width = 0.8
+  ) +
+  stat_summary(
+    aes(color = scenario),
+    fun.data = mean_sd,
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.2,
+    linewidth = 0.8
+  ) +
+  facet_grid(
+    var ~ magnitude,
+    scales = "free_y",
+    switch = "y",
+    labeller = labeller(
+      var = as_labeller(c(pr = "Precipitation IAV (mm)", tas = "Temperature IAV (°C)")),
+      magnitude = as_labeller(c(tenth = "Negative extreme", ninetieth = "Positive extreme"))
+    )
+  ) +
+  theme_bw()+
+  theme(
+    legend.position = "top",
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 12)
+  )+
+  labs(y="",x="",fill="",col="") 
+
+# Save the plot
+ggsave(
+  filename = "paper_figure/climate_Extremes.png",  # you can change the file name and extension
+                               # the ggplot object
+  width = 8,                               # width in inches
+  height = 6,                              # height in inches
+  dpi = 300                                # resolution
+)
+
+
+
+# Base plotting function
+
+
+# Function to generate a single plot
+make_plot <- function(data, var_filter, mag_filter, fill_lab, bound) {
+  data %>%
+    filter(var == var_filter, magnitude == mag_filter) %>%
+    ggplot(aes(x = x, y = y, fill = value)) +
+    geom_tile() +
+    geom_sf(data = bound, fill = NA, color = "black", inherit.aes = FALSE) +
+    geom_sf_text(aes(label = value), size = 3, data = bound, inherit.aes = FALSE) +
+    facet_wrap(~scenario) +
+    scale_fill_gradientn(
+      colours = c("#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494")
+    ) +
+    labs(
+      fill = fill_lab,
+      x = "",
+      y = "",
+      title = paste0(
+        ifelse(var_filter == "pr", "Precipitation", "Temperature"), " - ",
+        ifelse(mag_filter == "tenth", "Negative IAV extreme", "Positive IAV extreme")
+      )
+    ) +
+    theme_minimal() +
+    theme(strip.placement = "outside",
+          legend.position="bottom")
+}
+
+
+# Build the 4 plots
+p1 <- make_plot(
+  ext_nodatemodel,
+  "pr",
+  "tenth",
+  "Precipitation (mm)",
+  sf::st_as_sf(climatebound)
+)
+
+p2 <- make_plot(ext_nodatemodel, "pr",  "ninetieth", "Precipitation (mm)",  sf::st_as_sf(climatebound))
+p3 <- make_plot(ext_nodatemodel, "tas", "tenth",     "Temperature (°C)",  sf::st_as_sf(climatebound))
+p4 <- make_plot(ext_nodatemodel, "tas", "ninetieth", "Temperature (°C)",  sf::st_as_sf(climatebound))
+
+ggsave("p1_precip_tenth.png",  plot = p1, width = 5, height = 4, dpi = 300)
+ggsave("p2_precip_ninetieth.png", plot = p2, width = 5, height = 4, dpi = 300)
+ggsave("p3_temp_tenth.png",    plot = p3, width = 5, height = 4, dpi = 300)
+ggsave("p4_temp_ninetieth.png", plot = p4, width = 5, height = 4, dpi = 300)
+
+
+
+
+
+
+grid_4 <- (p1 | p2) /
+          (p3 | p4)
+
+
+grid_4
+
+ggsave("extremes_grid.png", 
+       plot = final_plot, 
+       width = 10, height = 10, dpi = 600)
+
+   
+```
+
+# Result1 (NPP:Trend,SD,contribution)
+
+```{r}
+# Add significant line in the trend plot
+
+list(alltrendresult_plot,
+IAV_SD_table_plot,
+contri_sum_plot)
+
+
+sd_plot <- ggplot(
+  sd_zone_data,aes(x=country,y=IAV_sd,fill=scenario))+
+  stat_summary(
+    fun = mean,geom = "bar",
+    position=position_dodge(0.9),width = 0.9) +
+  stat_summary(
+    fun.min = function(x) {mean(x) - sd(x)/sqrt(length(x))},
+    fun.max = function(x) {mean(x) + sd(x)/sqrt(length(x))},
+    geom = "errorbar",
+    position=position_dodge(0.9),width = 0.9) +
+  labs(y=expression(Annual~NPP~variation~TgC~yr^-1),fill="",x="")+
+  theme_bw()+
+  theme(
+         strip.text =  element_text(size=10,family = "sans"),
+         axis.text.x = element_text(size=10,family = "sans"),
+         axis.text.y = element_text(size=10,angle=90,family = "sans"),
+         axis.ticks.length =  unit(-0.1, "cm"),
+         legend.text=element_text(size=8,family = "sans"),
+         legend.position = c(0.55,0.9),
+         legend.direction = "horizontal") 
+  
+
+sd_plot
+
+
+load("rdata/contri_year_gross.RData")
+
+sum_lab <- as_labeller(c(
+  npp = "NPP~TgC~yr^-1", 
+  pr="Precipitation mm/yr",
+  tas="Temperature Celsius/yr"),label_parsed)
+
+trend_time_plot <- ggplot(allmeanerro_plot |> 
+         filter(country=="all",index=="npp"),
+       aes(x = year, y = mean, fill=Scenario))+
+  geom_ribbon(aes(ymin = mean-erro,ymax =mean+erro),alpha = 0.2) +
+  geom_line(aes(col=Scenario)) +
+  geom_smooth(method = "lm",se=FALSE,aes(col=Scenario))+
+  facet_wrap(.~index,ncol = 1,
+             scales="free_y",
+             strip.position = "left",
+             labeller= sum_lab)+
+  labs(y="",x="",fill="",col="") +
+  theme_bw()+
+  theme( strip.placement = "outside",
+         strip.background = element_blank(),
+         strip.text =  element_text(size=10,family = "sans"),
+         axis.text.x = element_text(size=10,family = "sans"),
+         axis.text.y = element_text(size=10,angle=90,family = "sans"),
+         axis.ticks.length =  unit(-0.1, "cm"),
+         legend.text=element_text(size=10,family = "sans"),
+         legend.position = c(0.45,0.9),
+         legend.direction = "horizontal") 
+
+
+trend_time_plot
+
+
+
+
+basic_space_plot2  <- basic_space_plot[[7]]+
+   labs(title =  "Annual NPP Trend" )+
+  basic_space_plot[[4]] +
+  labs(title =  "Annual NPP Variation" )
+   # relation_mean_plot[[1]]+
+   # labs( title =  expression("Contribution to NPP IAV"),
+   #       fill=expression("Contribution"~10^-4~"%")) 
+
+
+
+
+
+
+
+
+
+basic_space_plot2
+  
+
+
+
+trend_time_plot+sd_plot+
+  basic_space_plot2+
+  plot_layout(design = c(area(1,1,1,1),  # up left down right
+                       area(1,2,1,2.5),
+                       area(2,1,2,2.5)))+
+
+      plot_annotation(tag_levels = 'a')
+
+
+
+ggsave("paper_figure/npp.png",height=6.5,width=8,dpi=700,scale=1.4)
+
+
+basic_space_plot[[7]] +
+annotation_custom(grob=ggplotGrob(trend_plot),
+                     xmin=50,xmax=80,
+                     ymin=35,ymax=45)
+
+
+lineplot   <-  trend_time_plot +
+  #trend_plot            +
+  # sd_plot       + 
+  # contri_plot   +
+   plot_layout(guides="collect") &
+   theme(legend.position='bottom'
+        )
+```
+
+# New result1
+
+```{r}
+# Load density in table 
+load("F:/CMIP6_table/radata/contri_density_plot.RData")
+
+
+
+
+
+
+p1 <- basic_space_plot[[4]]+  labs(title =  "Annual NPP Variation" )
+
+
+ 
+area <-   caarea_zone %>% 
+    mutate(country=c("NCA","CCA","SWCA","SECA")) %>% 
+    select(-c(value,unit))  %>% 
+    rbind(  
+  caarea_zone %>% 
+  summarise(area=sum(area)) %>% 
+  mutate(country="Central Asia"))
+    
+  
+sd_zone_data2 <- sd_zone_data %>% 
+  left_join(area) %>% 
+  mutate(IAV_sd=IAV_sd*1e12/area*2)
+
+
+
+sd_data3 <- sd_zone_data2 %>% 
+  mutate(type="density") %>% 
+  bind_rows(mutate(sd_zone_data,type="whole"))
+
+
+sd_plot2 <- ggplot(
+  sd_data3 |> 
+  mutate(country=factor(country,
+    levels=c("Central Asia","NCA","SECA","SWCA","CCA"))), 
+  
+  aes(x = country, y = IAV_sd, fill = scenario)
+) +
+  stat_summary(
+    fun = mean, geom = "bar",
+    position = position_dodge(0.9), width = 0.9
+  ) +
+  stat_summary(
+    fun.min = function(x) { mean(x) - sd(x)/sqrt(length(x)) },
+    fun.max = function(x) { mean(x) + sd(x)/sqrt(length(x)) },
+    geom = "errorbar",
+    position = position_dodge(0.9), width = 0.9
+  ) +
+  facet_grid(
+    type ~ .,
+    scales = "free_y",
+    switch = "y",
+    labeller = labeller(
+      type = as_labeller(
+        c(
+          density = "Annual~NPP~variation~gC~m^{-2}~yr^{-1}",
+          whole   = "Annual~NPP~variation~TgC~yr^{-1}"
+        ),
+        label_parsed
+      )
+    )
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.placement = "outside",
+    strip.background = element_blank(),              
+    strip.text.y.left = element_text(size=11, family="sans"),
+    axis.text.x = element_text(size=10, family="sans"),
+    axis.text.y = element_text(size=10, angle=90, family="sans"),
+    axis.ticks.length = unit(-0.1, "cm"),
+    legend.text = element_text(size=8, family="sans"),
+    legend.direction = "horizontal"
+  ) +
+  labs(y = NULL,fill= NULL,x=NULL) # remove redundant y-axis label
+
+sd_plot2
+
+
+
+ggsave(
+  filename = "paper_figure/annual_npp_variation.png",
+  plot = p1,
+  width = 6, height = 5, dpi = 300,
+  bg = "transparent"
+)
+
+# Plot 2: sd_plot
+ggsave(
+  filename = "paper_figure/sd_plot2.png",
+  plot = sd_plot2,
+  width = 5, height = 6, dpi = 300,
+  bg = "transparent"
+)
+
+
+```
+
+# Result2 (Correlation/Contribution/Sensitvity)
+
+```{r}
+load("rdata/ca_gross_space_relationship.RData")
+load("rdata/ca_gross_space_relationship_extreme.RData")
+load("rdata/ca_gross_space_relationship_extreme_meanmodel.RData")
+
+
+
+```
+
+## Contribution
+
+```{r}
+# Question 
+
+# Normally
+
+climatecon_space_data <- cli_contri|>
+  rename(name=var)|>
+  mutate(value=10000*value)  |>
+  filter(scenario=="SSP585") |>
+  summarise(value=mean(value,na.rm=T),.by = c(scenario,x,y,name)) |>
+  group_nest(scenario)|>
+  mutate(bound=list(sf::st_as_sf(climatebound)))  |>
+  mutate(name=as.list("dd"))
+
+
+hist(climatecon_space_data$data[[1]]$value)
+range( climatecon_space_data$data[[1]]$value)
+quantile(climatecon_space_data$data[[1]]$value)
+
+8*3/11
+
+color2 <- c("#d62e29","#e06345", "#fab884", 
+            "#7bed01","#06d41a","#1ba87d","#b2c7d8",
+           "#97aebe","#097da4","#0951a4","#2409a4")
+ 
+
+label2 <-  c("-0.3", "-0.2", "-0.1",
+             "0","0.1", "0.2","0.4",
+             "0.8","1.6","3.2","4","6")
+
+length(color2)
+length(label2)
+
+
+contribution_discrete <-   pmap(
+  list(climatecon_space_data$data, climatecon_space_data$bound),
+  ~ ggplot() +
+  geom_raster(data = ..1,
+              aes(x = x,y = y,fill = cut(value,label2)
+              ))                                    +
+  geom_sf(data=..2, fill = alpha(0.01))             +
+  geom_sf_text(aes(label=value),size=5,data = ..2 ) +
+  coord_sf()                                        +
+  facet_grid(. ~ name,
+             labeller = as_labeller(c("pr"="Precipitation",
+                                      "tas"="Temperature")))+
+  scale_fill_manual(
+    na.value = "white",
+    values =color2,
+    labels = label2) +
+    guides(
+      fill = guide_legend(title.position="top",
+        title = expression("Contribution to NPP IAV"~10^-4~"%"),
+        label.position = "bottom",
+        nrow = 1,
+        keywidth = 2.18,
+        keyheight=1)
+      ) +
+    labs(x = "", y = "") +
+    theme_classic() +
+    theme(
+      strip.text = element_text(size=12),
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_blank(),
+      legend.position = c(0.5,-0.2),
+      legend.spacing.x = unit(0, 'cm'),
+      legend.text.align = 0,
+      plot.margin = margin(0,0,40,0)
+    ))
+
+contribution_discrete
+
+```
+
+## Correlation
+
+```{r}
+cor_p_data <- cor_out   |>  
+  pivot_longer(pr_npp:tas_npp_p)|> 
+  filter(scenario=="SSP585") |> 
+  filter(str_detect(name,"_p"))  |> 
+  summarise(value=mean(value,na.rm=T),.by = c(scenario,x,y,name))|>       
+  mutate(p_value=ifelse(value<0.05,value,NA),.keep = "unused") |> 
+  mutate(name=str_replace(name,"_p",""))
+
+cor_data <- cor_out   |>  
+  pivot_longer(pr_npp:tas_npp_p)|> 
+  filter(scenario=="SSP585") |> 
+  filter(!str_detect(name,"_p"))  |> 
+  summarise(value=mean(value,na.rm=T),.by = c(scenario,x,y,name)) |> 
+  left_join(cor_p_data)                   |> 
+  group_nest(scenario)|> 
+  mutate(bound=list(sf::st_as_sf(climatebound)))  
+
+
+
+cor_data$data[[1]]$value |> quantile()
+cor_data$data[[1]]$value |> hist()
+
+cut(cor_data$data[[1]]$value,c(-0.3,-0.2,-0.1,
+                               0,0.2,0.4,0.5,0.6,0.7))
+
+
+color3 <- c("#d62e29","#e06345", "#fab884", 
+            "#7bed01","#06d41a","#1ba87d",
+            "#b2c7d8","#097da4")
+
+
+
+length(color3)
+
+label3 <- c("-0.3","-0.2","-0.1",
+            "0","0.2", "0.4",
+            "0.5","0.6","0.7")
+
+length(label3)
+
+
+correlation_discrete <- pmap(list(cor_data$data,
+          cor_data$bound),
+          ~ggplot()+
+     geom_raster(data = ..1,
+     aes(x = x, y = y,fill=cut(value,label3))) +
+     geom_sf(data=..2,fill=alpha(0.01)) +
+     geom_sf_text(aes(label=value),size=5,data = ..2 ) +
+     geom_point(data=..1 |> filter(!is.na(p_value)),
+               aes(x=x,y=y),shape=1,size=0.1,alpha=0.5)  +
+    coord_sf()                                            +
+    facet_grid(.~name,labeller = as_labeller(c("pr_npp"="Precipitation",
+                                               "tas_npp"="Temperature")))   +
+    scale_fill_manual(na.value = "white",
+           values = color3,
+           labels=label3)+ 
+    guides(fill=guide_legend(title.position="top",
+                             title="Correlation",
+                             label.position = "bottom",nrow = 1,
+                             keywidth=3,keyheight = 1)) +
+    labs(x="",y="") +
+    theme_classic() +
+    theme(
+      strip.text = element_text(size=12),
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_blank(),
+    #  legend.position = "bottom",
+          legend.position = c(0.55,-0.2), 
+     legend.spacing.x = unit(0, 'cm'),
+     legend.text.align = 0,
+     plot.margin = margin(0,0,30,0)
+    ))
+```
+
+## sensitivity
+
+```{r}
+
+sen_theme <- 
+    theme(
+      axis.line = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_blank(),
+     legend.position = c(0.55,-0.2), 
+     legend.spacing.x = unit(0, 'cm'),
+     legend.text.align = 0,
+     legend.key.width =unit(2.5,"cm"),
+     legend.key.height =unit(1,"cm"),
+     legend.title = element_text(size=9),
+     plot.margin = margin(0,0,30,0)
+    )
+
+model_fit_p1 |> 
+  filter(scenario=="SSP585") |>
+  summarise(tas_p=mean(tas,na.rm=T),pr_p=mean(pr,na.rm=T),.by = c(scenario,x,y)) 
+
+sensitivity_space_data <- model_out |> 
+  left_join(model_fit_p1)           |> 
+  select(-rsquare) |> 
+  filter(scenario=="SSP585") |>
+  summarise(across(where(is.numeric),mean),.by = c(scenario,x,y)) |> 
+  mutate(pr_sen=pr_sen*100)
+
+sensitivity_space_data |> drop_na(pr_sen,pr) |> filter(pr<0.05) 
+
+sensitivity_space_data |> drop_na(tas_sen,tas) |> filter(tas<0.05)  
+
+color4 <- c("#d62e29","#e06345", 
+            "#7bed01","#06d41a",
+            "#1ba87d")
+
+
+
+pr_cut <- sensitivity_space_data$pr_sen   |> 
+  quantile(probs = seq(0, 1, 0.2),na.rm=T) |> 
+  as.numeric() |> 
+  round(digits = 4)
+
+pr_cut
+pr_cut <- c(0,0.05,0.06,0.07,0.08,0.12)
+
+ext_cut <- c(-0.1,0,0.1,0.15,0.2,0.3)
+
+prsensitivity_plot<- ggplot()+
+     geom_raster(data = sensitivity_space_data |> drop_na(pr_sen,pr),
+     aes(x = x, y = y,fill=cut(pr_sen,
+                               ext_cut)))+
+                               #pr_cut))) +
+     geom_sf(data=bound_sf,fill=alpha(0.01)) +
+     geom_sf_text(aes(label=value),size=5,data =bound_sf) +
+     geom_point(data=sensitivity_space_data |>
+                  drop_na(pr_sen,pr) |> 
+                  filter(pr<0.05),
+                aes(x=x,y=y),shape=1,size=0.1,alpha=0.5)  +
+    coord_sf()                                            +
+    scale_fill_manual(na.value = "white",
+           values = color4,
+          # labels=pr_cut
+           labels=ext_cut
+           )+ 
+    guides(fill=guide_legend(title.position="top",
+                             title = expression(Sensitivity~of~NPP~to~precipitation(Tg~100~mm^{-1})), #100m
+                             label.position = "bottom",nrow = 1,
+                             keywidth=2,keyheight = 1)) +
+    labs(x="",y="") +
+    theme_classic() +
+    sen_theme
+
+
+prsensitivity_plot
+
+tas_cut <- sensitivity_space_data$tas_sen |> 
+  quantile(probs = seq(0, 1, 0.2)) |> 
+  as.numeric(digits = 3)  |> 
+  round(digits = 4)
+
+tas_cut
+
+
+tas_cut <- c(-0.02,-0.01,0,0.001,0.003,0.03)
+
+
+tas_sensitivity_plot <-ggplot()+
+     geom_raster(data = sensitivity_space_data,
+     aes(x = x, y = y,fill=cut(tas_sen,tas_cut))) +
+     geom_sf(data=bound_sf,fill=alpha(0.01)) +
+     geom_sf_text(aes(label=value),size=5,data =bound_sf) +
+     geom_point(data=sensitivity_space_data |> filter(tas<0.05),
+                aes(x=x,y=y),shape=1,size=0.1,alpha=0.5)  +
+    coord_sf()                                            +
+    scale_fill_manual(na.value = "white",
+           values = color4,
+           labels=tas_cut)+ 
+    guides(fill=guide_legend(title.position="top",
+                             title = expression(Sensitivity~of~NPP~to~temperature~(Tg~degree*C^{-1})),
+                             label.position = "bottom",nrow = 1,
+                             keywidth=2,keyheight = 1)) +
+    labs(x="",y="") +
+    theme_classic() +
+    sen_theme
+ 
+tas_sensitivity_plot
+
+```
+
+## Variation
+
+```{r}
+
+variation_plot <-  basic_space |> 
+       filter(!var=="npp",type%in%c("sd")) |> 
+       select(-c(bound,unit)) |> 
+       unnest(data)           |> 
+       pivot_wider(names_from = var,values_from = mean)
+
+
+quantile(variation_plot$pr) 
+quantile(variation_plot$tas)
+
+
+
+pr_var_cut <- c(30,50,70,100,200)
+tas_var_cut <- c(0.5,0.6,0.8,1,1.2) 
+
+
+color4 <- c("#06d41a","#1ba87d", 
+            "#097da4","#2409a4")
+
+
+variation_pr <- ggplot()+
+     geom_raster(data = variation_plot,
+     aes(x = x, y = y,fill=cut(pr,pr_var_cut))) +
+     geom_sf(data=bound_sf,fill=alpha(0.01)) +
+     geom_sf_text(aes(label=value),size=5,data =bound_sf) +
+    coord_sf()                                            +
+    scale_fill_manual(na.value = "white",
+           values = color4,
+           labels=pr_var_cut)+ 
+    guides(fill=guide_legend(title.position="top",
+                             title="The variation of precipitation (mm)", #100m
+                             label.position = "bottom",nrow = 1,
+                             keywidth=2,keyheight = 1)) +
+    labs(x="",y="") +
+    theme_classic() +
+    sen_theme
+
+variation_pr 
+
+
+variation_tas <- ggplot()+
+     geom_raster(data = variation_plot,
+     aes(x = x, y = y,fill=cut(tas,tas_var_cut))) +
+     geom_sf(data=bound_sf,fill=alpha(0.01)) +
+     geom_sf_text(aes(label=value),size=5,data =bound_sf) +
+    coord_sf()                                            +
+    scale_fill_manual(na.value = "white",
+           values = color4,
+           labels=tas_var_cut)+ 
+    guides(fill=guide_legend(title.position="top",
+                             title="The variation of temperature (℃)", #100m
+                             label.position = "bottom",nrow = 1,
+                             keywidth=2,keyheight = 1)) +
+    labs(x="",y="") +
+    theme_classic() +
+    sen_theme
+
+
+variation_tas 
+
+
+```
+
+## Save plot (continuous method)
+
+```{r}
+
+
+contribution_discrete[[1]]/correlation_discrete[[1]]+ 
+  (prsensitivity_plot+tas_sensitivity_plot)+ plot_annotation(tag_levels="a") 
+
+ggsave("paper_figure/cor_contri_sen_dis.png",width=6.5,height=10,dpi=700,scale=1) 
+
+
+(correlation_discrete[[1]]|contribution_discrete[[1]])/ 
+  (prsensitivity_plot|tas_sensitivity_plot| 
+  variation_pr|variation_tas)+ plot_annotation(tag_levels="a") 
+
+
+# (correlation_discrete[[1]]|prsensitivity_plot|tas_sensitivity_plot)/ 
+#   (contribution_discrete[[1]]|variation_pr|variation_tas)+ plot_annotation(tag_levels="a") 
+
+ggsave("paper_figure/cor_contri_sen_variation.png",width=13,height=6,dpi=700,scale=1.05) 
+
+
+contribution_discrete[[1]]/correlation_discrete[[1]]+ plot_annotation(tag_levels="a") 
+
+ggsave("paper_figure/cor_contri_dis.png",width=6,height=6,dpi=700) 
+
+prsensitivity_plot+tas_sensitivity_plot+ plot_annotation(tag_levels="a") 
+
+ggsave("paper_figure/sensitivy.png",width=7,height=3.5,dpi=700,scale=1) 
+
+
+  relation_mean_plot[[3]]+
+#  annotate(geom="text",label= "Precipitation",x=52,y=54,size=4)+
+  labs(fill="Correlations",title = "Precipitation") +
+  relation_mean_plot[[8]]+
+  labs(fill="Correlations",title = "Temperature")+  
+  contribution_plot    +
+  plot_annotation(tag_levels = "a")+
+  plot_layout(design = c(area(1,1,1,1),  # up left down right
+                       area(1,2,1,2),
+                       area(2,1,2,2)))
+
+  # design = c(area(1,1,1,1),
+  #            area(1,2,1,2)))   &
+  # theme(legend.position='top')
+  
+ggsave("paper_figure/cor_contri.png",width=6,height=6,dpi=700,scale=1.2) 
+
+
+relation_mean_plot[[6]]
+
+
+ggsave("paper_figure/r_square.png",width=3,height=3,dpi=700,scale=1.5) 
+
+relation_mean_plot[[5]]
+relation_mean_plot[[10]]
+```
+
+# Result3 Extreme attribution Proportion
+
+```{r}
+#| fig-height: 6
+#| fig-width:  8
+#| fig-dpi: 700
+
+
+
+
+prop_nodate_zone %>% 
+
+  group_by(ext_type,magnitude,region,scenario) %>% 
+  summarise(value=mean(value)) %>% 
+  filter(region=="se") %>% 
+  filter(ext_type%in%c("dry","wet"))
+
+
+plot_prop_nodate_zone <- prop_nodate_zone |>
+    mutate(ext_type = str_replace(ext_type, "_", " & \n")) |> 
+    filter(scenario == "SSP585") |> 
+    mutate(magnitude=str_replace_all(magnitude,c("ninetieth"="positive","tenth"="negative"))) %>% 
+    extmodify()
+
+
+plot_abc <- plot_prop_nodate_zone %>% 
+    filter(!ext_type%in%c("rest","hot & \nnotdry"))
+
+plot_abc$ext_type <- factor(plot_abc$ext_type,levels=c(
+  "dry", "wet", "cold", "hot",
+  "dry & \nhot", "dry & \nnothot"
+)
+)
+
+
+
+
+prop_zone_plot <- ggplot(
+  data = plot_abc,
+  mapping = aes(
+    x = ext_type,
+    y = value,
+    fill = region
+  )
+) +
+  geom_boxplot(
+    width = 0.6,
+    outlier.size = 1,
+    outlier.alpha = 0.6
+  ) +
+  scale_y_continuous(
+    limits = c(0, 0.75),
+    expand = c(0, 0),
+    breaks = seq(0, 0.75, by = 0.2),
+    labels = function(x) ifelse(x == 0, "", scales::percent_format(accuracy = 1)(x))
+  ) +
+  facet_wrap(
+    ~ magnitude,
+    ncol = 1,
+    strip.position = "left"
+  ) +
+  labs(
+    fill = "",
+    x = "",
+    y = "Fraction of NPP Extremes Attributed to Climate Extremes"
+  ) +
+  theme_bw() +  # Move theme_bw BEFORE theme()
+  theme(
+    axis.text.x = element_text( hjust = 1, vjust = 1),
+    axis.ticks.length.y = unit(-0.1, "cm"),
+    axis.text.y = element_text(angle = 90),
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    legend.position = "top",
+    legend.box.spacing = unit(0.5, "cm"),
+    strip.text = element_text(size = rel(1.1)),
+    plot.margin = unit(c(1, 1, 1, 1), "cm"),
+    plot.tag = element_text(size = 14, face = "bold")  # Make sure tag is visible
+  ) 
+
+
+prop_zone_plot
+
+ggsave(
+  filename = "paper_figure/fraction_attributed_events_region.tiff",
+  plot = prop_zone_plot,
+  width = 8,
+  height = 6,
+  scale= 0.9,
+  units = "in",
+  dpi = 600,
+)
+
+
+
+
+
+
+
+
+
+
+
+
+# Combine this with the plot produced in the whole in PPT.
+
+prop_zone_plot <- ggplot(
+  prop_nodate_zone |>
+    filter(value<1) |> 
+    mutate(ext_type=str_replace(ext_type,"_"," & \n")) |> 
+   # filter(scenario=="SSP585")  |> 
+    filter(region=="CA")  |> 
+    extmodify(),
+  #aes(x=ext_type,y=value,fill=region))+
+  aes(x=ext_type,y=value,fill=class))+
+  #aes(x=ext_type,y=value,fill=scenario))+
+  geom_boxplot()+
+  scale_y_continuous()+
+  labs(title = "",x="",fill="",y="Fraction of attributed events")+
+  theme_bw() +
+  theme(axis.ticks.length.y = unit(-0.1,"cm"),
+        axis.text.y = element_text(angle=90),
+        strip.background = element_blank(),
+        strip.placement = "outside")+
+#  facet_wrap(class~magnitude,nrow=2)
+  facet_wrap(scenario~magnitude,nrow=2)
+
+
+#ggsave("paper_figure/proportion_positive.png",width=8,height=5)
+
+prop_zone_plot
+
+att_gross_nodate_data <- 
+  bind_rows(
+    att_gross_nodate_zone |> 
+      filter(scenario=="SSP585") |> 
+      filter(index=="value")     ,
+    
+    att_gross_nodate_zone |> filter(index=="quantity") |> 
+      pivot_wider(names_from=region,values_from = value) |> 
+      mutate(across(north:se,~./CA)) |> 
+      pivot_longer(CA:se,names_to = "region") |> 
+      mutate(value=value*100)) |> 
+  filter(!region=="CA") |>         
+  extmodify()
+
+att_gross_zone_plot <- ggplot(
+  att_gross_nodate_data |> 
+    filter(index=="value") |> 
+    mutate(ext_type=str_replace(ext_type,"_"," & \n")) |> 
+    filter(scenario=="SSP585"), 
+  aes(x=ext_type,y=value,fill=region))+
+  geom_boxplot()  +
+  # facet_wrap(
+  #   index~.,scales = "free",nrow = 2,
+  #   labeller = as_labeller(c(value ="Extreme NPP TgC/yr", 
+  #                            quantity="Frequency (%)")),
+  #   strip.position = "left") +
+  labs(x="",y="",fill="",tag="b")+
+  labs(y=expression(Extreme~NPP~TgC~yr^-1))  +
+  theme_bw() +
+  theme(axis.ticks.length.y = unit(-0.1,"cm"),
+        axis.text.y = element_text(angle=90),
+        strip.background = element_blank(),
+        strip.placement = "outside")
+
+att_gross_zone_plot
+# the attribution of extreme plot
+
+att_space <- att_nodatemodel |> 
+  group_nest(ext_type) |> 
+  mutate(unit=str_c("10th npp attributed to ",ext_type)) |> 
+  mutate(unit=as.list(unit)) |>
+  mutate(bound=list(sf::st_as_sf(climatebound))) 
+
+
+att_space_plot <-pmap(
+  list(att_space$data,
+       att_space$bound,
+       att_space$unit),
+  ~ggplot()+
+    geom_raster(data =..1,aes(x = x, y = y,fill = value)) +
+    geom_sf(data=..2,fill=alpha(0.01)) +
+    facet_wrap(scenario~.,nrow = 1)+
+    coord_sf()+
+    scale_fill_gradientn(colours = terrain.colors(110))+
+    labs(title = ..3,
+         fill=expression("npp C g"~m^-2~year^-1),
+         x ='Longitude(E)',y="Latitude(N)") +
+    space_theme +
+    theme_bw())
+
+
+#regionalized_space
+
+
+prop_zone_plot/att_gross_zone_plot+
+#att_space_plot[[1]]+
+  plot_annotation(tag_levels = "a")
+
+ggsave("paper_figure/prop.png",width=6,height=6,dpi=700,scale=1.1) 
+
+```
+
+#Result3 Extreme pattern
+
+```{r}
+# load("rdata/ca_density_mean.RData")
+
+load("rdata/ca_gross_sum80_zonesum.RData")
+#load("rdata/ca_density_sum80.RData")
+```
+
+## Negative TS & Magnitude
+
+```{r}
+#| label: extreme_ts
+
+
+ext1_data <- ext_nospace_zone |> 
+  filter(var=="npp"&magnitude=="tenth")  |> 
+  summarise(error=sd(value),value=mean(value),.by=c(scenario,var,date,magnitude))
+  
+
+ext1_sig <- ext1_data                                 |> 
+  group_nest(scenario)                                |> 
+  mutate(model=map(data,~lm(data=.,value~date)        |> 
+                   broom::tidy()))                    |> 
+  select(-data)                                       |> 
+  unnest(model)                                       |> 
+  filter(term=="date")                                |> 
+  mutate(x=c(2035,2035,2055,2055),y=c(-78,-84,-78,-84)) |>  # -78, 80 for the figure without ribbon
+  mutate(p.value=round(p.value,digits=5))             |> 
+  mutate(psymble = case_when(p.value<0.001 ~ "***",
+                             p.value<0.01 ~ "**",
+                             p.value<0.05  ~ "*"
+                             ))    |> 
+  mutate(statistic=round(statistic,digits=2))         |> 
+  mutate(label=str_c(scenario,": ",statistic,psymble)) 
+  
+
+
+ ext1 <- ext1_data |>
+  ggplot(aes(x=date,y=value)) +
+  geom_text(data=ext1_sig,aes(x=x,y=y-30,label=label,col=scenario),
+            family="serif",size=3,show.legend = FALSE)+
+  geom_ribbon(aes(ymin = value-error,ymax =value+error,fill=scenario),alpha = 0.2,show.legend = FALSE) +
+  geom_line(aes(col=scenario))+
+  geom_smooth(method="lm",se=FALSE,aes(col=scenario),linewidth=0.5) +
+  labs(y=expression("NPP gC"~m^-2~yr^-1),col="",x="")+
+  theme_bw()+
+  theme(legend.position = "top")
+
+
+ext1
+
+ext2 <- ext_nodate_zone |> 
+  
+  mutate(value=value*80)  |> 
+  
+  
+  filter(index=="value"&magnitude=="tenth"&var=="npp")  |>  
+  extmodify()                                          |> 
+  ggplot(aes(x=region,y=value,fill=scenario,col=scenario))+
+    stat_summary(
+      fun.min = function(x) {mean(x) - sd(x)/sqrt(length(x))},
+      fun.max = function(x) {mean(x) + sd(x)/sqrt(length(x))},
+      geom = "errorbar",
+      position=position_dodge(0.9),width = 0.9) +  
+    stat_summary(fun=mean,geom = "bar",
+      position=position_dodge(0.9),width = 0.9) +
+      ylab(expression(NPP~gC~m^-2))+
+      labs(fill="",col="",x="") +
+      theme_bw()  +
+      theme(legend.position = "top") 
+
+
+ext1/ext2+
+  plot_annotation(tag_levels = "a")
+
+
+ggsave("paper_figure/extreme_date_magnitude.png",width=20,#width=25,
+       height=20,units="cm",scale = 0.7)
+
+
+```
+
+## Positive TS & Magnitude
+
+```{r}
+ext1_data <- ext_nospace_zone |> 
+  filter(var=="npp"&magnitude=="ninetieth")  |> 
+  summarise(error=sd(value),value=mean(value),.by=c(scenario,var,date,magnitude))
+
+
+dis1 <-218  
+
+ext1_sig <- ext1_data                                 |> 
+  group_nest(scenario)                                |> 
+  mutate(model=map(data,~lm(data=.,value~date)        |> 
+                   broom::tidy()))                    |> 
+  select(-data)                                       |> 
+  unnest(model)                                       |> 
+  filter(term=="date")                                |> 
+  mutate(x=c(2035,2035,2055,2055),y=c(-78+dis1,-84+dis1,-78+dis1,-84+dis1)) |>  # -78, 80 for the figure without ribbon
+  mutate(p.value=round(p.value,digits=5))             |> 
+  mutate(psymble = case_when(p.value<0.001 ~ "***",
+                             p.value<0.01 ~ "**",
+                             p.value<0.05  ~ "*"
+                             ))    |> 
+  mutate(statistic=round(statistic,digits=2))         |> 
+  mutate(label=str_c(scenario,": ",statistic,psymble)) 
+  
+
+
+ ext1 <- ext1_data |>
+  ggplot(aes(x=date,y=value)) +
+  geom_text(data=ext1_sig,aes(x=x,y=y-30,label=label,col=scenario),
+            family="serif",size=3,show.legend = FALSE)+
+  geom_ribbon(aes(ymin = value-error,ymax =value+error,fill=scenario),alpha = 0.2,show.legend = FALSE) +
+  geom_line(aes(col=scenario))+
+  geom_smooth(method="lm",se=FALSE,aes(col=scenario),linewidth=0.5) +
+  labs(y=expression("NPP gC"~m^-2~yr^-1),col="",x="")+
+  theme_bw()+
+  theme(legend.position = "top")
+ 
+
+
+
+ext2 <- ext_nodate_zone |> 
+  
+  mutate(value=value*80)  |> 
+  
+  
+  filter(index=="value"&magnitude=="ninetieth"&var=="npp")  |>  
+  extmodify()                                          |> 
+  ggplot(aes(x=region,y=value,fill=scenario,col=scenario))+
+    stat_summary(
+      fun.min = function(x) {mean(x) - sd(x)/sqrt(length(x))},
+      fun.max = function(x) {mean(x) + sd(x)/sqrt(length(x))},
+      geom = "errorbar",
+      position=position_dodge(0.9),width = 0.9) +  
+    stat_summary(fun=mean,geom = "bar",
+      position=position_dodge(0.9),width = 0.9) +
+      ylab(expression(NPP~gC~m^-2))+
+      labs(fill="",col="",x="") +
+      theme_bw()  +
+      theme(legend.position = "top") 
+
+
+ext1/ext2+
+  plot_annotation(tag_levels = "a")
+```
+
+These data derived from gross data are summed in the region scale
+
+Under certain situation, the number of each year for extreme value is too small to produce the values instact number of 20 larger and 20 small.
+
+## whole
+
+```{r}
+load("rdata/ca_gross_sum80_zonesum.RData")
+# Create the plot and assign it to an object
+npp_magnitude <- ext_nodate_zone |> 
+#  mutate(value = value * 80) |> 
+  filter(index == "value", var == "npp") |>  
+  extmodify() |> 
+  mutate(magnitude = factor(magnitude, levels = c("ninetieth", "tenth"))) |> 
+  ggplot(aes(x = region, y = value, fill = scenario, color = scenario)) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "bar", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+   facet_grid(
+    magnitude ~ ., 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  labs(
+    x = NULL, 
+    # y = expression(NPP ~ (gC ~ m^{-2}~yr^{-1})), 
+    y = expression(NPP ~ (TgC ~ yr^{-1})),
+  # y = expression(NPP ~ (gC ~ yr^{-1})), 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+    theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    axis.text.y = element_text(angle = 90),
+    axis.text.x = element_text(angle = 0, hjust = 1, vjust = 1),
+    axis.ticks.length.y = unit(-0.1, "cm"),
+    strip.text.y = element_text(size = rel(1.1)),
+    plot.tag = element_text(size = 14, face = "bold")
+  )+
+    theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    strip.background = element_rect(fill = "transparent", color = NA)
+  )
+  
+  
+npp_sum
+
+ggsave(
+  filename = "paper_figure/NPP_extremes_proport1_improved.png",
+  plot = npp_plot,
+  width = 4,
+  height = 6.5,
+  units = "in",
+  dpi = 600,
+  bg = "transparent" 
+)
+
+
+
+npp_quantity <- ext_nodate_zone |> 
+  filter(index == "quantity", var == "npp") |>  
+#  filter(region!="CA") %>% 
+  extmodify() |> 
+  mutate(magnitude = factor(magnitude, levels = c("ninetieth", "tenth"))) |> 
+  ggplot(aes(x = region, y = value, fill = scenario, color = scenario)) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "bar", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+   facet_grid(
+    magnitude ~ ., 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  labs(
+    x = NULL, 
+    y = "The quantity of NPP extremes",
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+    theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    axis.text.y = element_text(angle = 90),
+    axis.text.x = element_text(angle = 0, hjust = 1, vjust = 1),
+    axis.ticks.length.y = unit(-0.1, "cm"),
+    strip.text.y = element_text(size = rel(1.1)),
+    plot.tag = element_text(size = 14, face = "bold")
+  )+
+    theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    strip.background = element_rect(fill = "transparent", color = NA)
+  )
+  
+
+
+
+
+load("rdata/ca_density_mean.RData")
+
+
+
+# Create the plot and assign it to an object
+npp_average <- ext_nodate_zone |> 
+  filter(index == "value", var == "npp") |>  
+  extmodify() |> 
+  mutate(magnitude = factor(magnitude, levels = c("ninetieth", "tenth"))) |> 
+  ggplot(aes(x = region, y = value, fill = scenario, color = scenario)) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "bar", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+   facet_grid(
+    magnitude ~ ., 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  labs(
+    x = NULL, 
+     y = expression(NPP ~ (gC ~ m^{-2}~yr^{-1})), 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+    theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    axis.text.y = element_text(angle = 90),
+    axis.text.x = element_text(angle = 0, hjust = 1, vjust = 1),
+    axis.ticks.length.y = unit(-0.1, "cm"),
+    strip.text.y = element_text(size = rel(1.1)),
+    plot.tag = element_text(size = 14, face = "bold")
+  )+
+    theme(
+    plot.background = element_rect(fill = "transparent", color = NA),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    strip.background = element_rect(fill = "transparent", color = NA)
+  )
+
+(npp_magnitude|npp_average|npp_quantity) +
+  plot_annotation(tag_levels = 'a') +
+  plot_layout(guides = "collect")&
+  theme(legend.position='top') 
+
+
+ggsave("paper_figure/NPP_extreme_series.png",width=9,height=6,dpi=700)
+
+
+```
+
+## Separate date
+
+```{r}
+
+load("rdata/ca_gross_sum80_zonesum.RData")
+
+ext_nospace_date_zone |> 
+  filter(var=="npp") |> 
+  ggplot(aes(x = scenario, y = value, fill = class, color = class,group = class)) +
+  # geom_col(position = "dodge") +
+   facet_grid(
+    magnitude ~. , 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "point", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+  labs(
+    x = NULL, 
+    y = expression(NPP ~ (Tg~C~yr^{-1})), 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    text = element_text(family = "Arial", size = 12),
+    axis.text = element_text(size = 10),
+    strip.text.y = element_text(angle = 0, size = 11)
+  )# +
+  geom_signif(comparisons=list(c("SSP126", "SSP585")),
+               tip_length = 0.04, vjust=0.2,color="black")
+
+
+
+
+load("rdata/ca_density_sum80.RData")
+load("rdata/ca_density_mean.RData")
+
+ext_nospace_date_zone |> 
+  filter(var=="npp") |> 
+  ggplot(aes(x = scenario, y = value, fill = class, color = class,group = class)) +
+  # geom_col(position = "dodge") +
+   facet_grid(
+    magnitude ~. , 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "point", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+  labs(
+    x = NULL, 
+    y = expression(NPP ~ (gC ~ m^{-2}~yr^{-1})), 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    text = element_text(family = "Arial", size = 12),
+    axis.text = element_text(size = 10),
+    strip.text.y = element_text(angle = 0, size = 11)
+  )+
+  geom_signif(comparisons=list(c("SSP126", "SSP585")),
+               tip_length = 0.04, vjust=0.2,color="black")
+
+
+ext_nospace_date_zone |> 
+  filter(var=="npp") |> 
+  ggplot(aes(x = scenario, y = quantity, fill = class, color = class,group = class)) +
+  # geom_col(position = "dodge") +
+   facet_grid(
+    magnitude ~. , 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "point", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+  labs(
+    x = NULL, 
+    y = "Frequency per year", 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    text = element_text(family = "Arial", size = 12),
+    axis.text = element_text(size = 10),
+    strip.text.y = element_text(angle = 0, size = 11)
+  )+
+  geom_signif(comparisons=list(c("SSP126", "SSP585")),
+               tip_length = 0.04, vjust=0.2,color="black")
+
+
+
+ext_nospace_date_zone |> 
+  filter(var=="pr") |> 
+  ggplot(aes(x = scenario, y = quantity, fill = class, color = class,group = class)) +
+  # geom_col(position = "dodge") +
+   facet_grid(
+    magnitude ~. , 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "point", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) +
+  labs(
+    x = NULL, 
+    y = "The Frequency of Precipitation per year", 
+    fill = NULL, 
+    color = NULL
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    text = element_text(family = "Arial", size = 12),
+    axis.text = element_text(size = 10),
+    strip.text.y = element_text(angle = 0, size = 11)
+  )+
+  geom_signif(comparisons=list(c("SSP126", "SSP585")),
+               tip_length = 0.04, vjust=0.2,color="black")
+
+
+
+ext_nospace_date_zone |> 
+  filter(var=="tas") |> 
+  ggplot(aes(x = scenario, y = quantity, fill = class, color = class,group = class)) +
+  # geom_col(position = "dodge") +
+   facet_grid(
+    magnitude ~. , 
+    scales = "free_y", 
+    switch = "y", 
+    labeller = labeller(
+      magnitude = c(
+        "ninetieth" = "Positive extremes",
+        "tenth"="Negative extremes"
+      )
+    )
+  ) +
+  stat_summary(
+    fun.min = \(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = \(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "errorbar",
+    position = position_dodge(width = 0.9),
+    width = 0.9
+  ) +
+  stat_summary(
+    fun = mean, 
+    geom = "point", 
+    position = position_dodge(width = 0.9), 
+    width = 0.9
+  ) 
+
+
+```
+
